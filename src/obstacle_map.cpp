@@ -550,6 +550,7 @@ namespace reactive_assistance
 
   void ObstacleMap::gapSearch(const Obstacle &obs, int n, bool right, std::vector<Gap> &gaps, int &next_ind) const
   {
+    // 输入：障碍物，搜索半径，搜索方向，输出：间隙向量，下一个间隙的索引
     //搜索障碍物地图中机器人能够通过的间隙
     // Wrap around effect for checking next index
     int next = (right) ? ((next_ind + 1) % n) : ((n + (next_ind - 1)) % n); // 基于当前的搜索方向，判断是下一个搜索点的index是左移还是右移
@@ -558,61 +559,76 @@ namespace reactive_assistance
     // separated by the min width (bilateral: basis on endpoint closer to robot) OR
     // either measurement is a non-obstacle point (unilateral: basis at unique endpoint)
     // 寻找深度不连续的点，判断深度不连续点是否大于机器人的通过距离
+    // 搜索机器人能够通过的间隙
+    // 通过计算下一个障碍物点和当前障碍物之间的距离差，判断计算机是否能够通过间隙 dist(obstacles_[next].point, obs.point) > robot_profile_.min_gap_width
+    // 为什么需要(obs.distance < obstacles_[next].distance))这个判断条件呢？为什么要求当前观测点距离机器人的距离一定要比下一个障碍物点距离小呢？
+    // (!almostEqual(obs.distance, scan_.range_max) && almostEqual(obstacles_[next].distance, scan_.range_max))
+    // 如果当前点在range内，下一个点超过了range，那么也可以认为是一个gap
     if (((dist(obstacles_[next].point, obs.point) > robot_profile_.min_gap_width) && (obs.distance < obstacles_[next].distance)) || (!almostEqual(obs.distance, scan_.range_max) && almostEqual(obstacles_[next].distance, scan_.range_max)))
     {
+      //如果搜索到一个gap，进入if执行程序
       // Initialise min variables
-      double min_visi, min_dist;
-      min_visi = min_dist = std::numeric_limits<double>::max();
-      int min_ind = -1;
+      double min_visi, min_dist; // min_visi 最小化可视角度, min_dist 最小化距离
+      min_visi = min_dist = std::numeric_limits<double>::max(); // 将double类型的最大值赋值给min_visi和min_dist，确保所有的值都小于这个最大值，方便后续的更新
+      int min_ind = -1; // 初始化最小索引为-1，表示还没有找到最小值
 
       // Fixed squared distance to gap start point
-      double dist_gap = obs.distance * obs.distance;
+      double dist_gap = obs.distance * obs.distance; // 定义当前观测点obs作为起始点，起始点的距离的平方作为判断参数
 
       // Evaluate OTHER side of gap by searching obstacle points falling to the opposite of the found gap side
-      int i = next;
+      int i = next; // 观测到的障碍物的下一个点作为判断点
       // O+ points are those in which the angular distance does not exceed PI
+      // O+ points 是角度小于PI的点, 确保搜索的范围合理
+      // 根据方向选择计算角度差的方向
       bool ang_safe = (right) ? (proj(obstacles_[i].angle - obs.angle) > 0.0) : (proj(obstacles_[i].angle - obs.angle) < 0.0);
-      while (ang_safe)
+      while (ang_safe) // 如果角度茶位正时差，则继续判断
       {
-        if (!almostEqual(obstacles_[i].distance, scan_.range_max))
+        if (!almostEqual(obstacles_[i].distance, scan_.range_max)) // 判断障碍物点是否在有效的距离内
         {
           // Determine whether these O+ points are valid or not
-          double distp = dist(obs.point, obstacles_[i].point);
+          double distp = dist(obs.point, obstacles_[i].point); // 计算当前点到障碍物点之间的距离
+          // 计算当前点和障碍物点形成的直线的与机器人当前方向形成的夹角
           double visibility = std::acos((dist_gap + distp * distp - obstacles_[i].distance * obstacles_[i].distance) / (2 * distp * obs.distance));
 
           // Valid O+ point if visibility condition met
+          // 角度越小则观测点和障碍物点形成的直线和机器人方向的夹角越小i，说明更好
           if (visibility < min_visi)
           {
-            min_visi = visibility;
+            min_visi = visibility; // 更新最小的角度
 
             // Find closest point from the valid ones
             if (distp < min_dist)
             {
-              min_dist = distp;
-              min_ind = i;
+              min_dist = distp; //更新最近的距离
+              min_ind = i; // 更新最近距离对应的索引
             }
           }
         }
 
         // Next point to evaluate and angular safety check
-        i = (right) ? ((i + 1) % n) : ((n + (i - 1)) % n);
-        ang_safe = (right) ? (proj(obstacles_[i].angle - obs.angle) > 0.0) : (proj(obstacles_[i].angle - obs.angle) < 0.0);
+        i = (right) ? ((i + 1) % n) : ((n + (i - 1)) % n); //根据检索的方向，更新下一个点。 使用取模运算，保证当前的点都在点云中进行处理。
+        // 进行角度安全检查，确保当前的角度差一直为正。如果为负，则说明已经遍历了一遍了，进入了[-π, π]另一个区间中了。
+        ang_safe = (right) ? (proj(obstacles_[i].angle - obs.angle) > 0.0) : (proj(obstacles_[i].angle - obs.angle) < 0.0); 
       }
 
       // If there is an empty set of valid O+ points
+      // 没有找到合适的边界，需要构造一个虚拟的边界
       if (min_ind == -1)
       {
         // Left side is a point at a distance R+d_safe and angle of left neighbourhood
-        geometry_msgs::Point virtual_point;
+        geometry_msgs::Point virtual_point; // 初始化一个虚拟点
         double virt_safe = robot_profile_.radius + robot_profile_.d_safe;
+        // 设置一个虚拟点，虚拟点的是由机器人当前的位置和虚拟的半径得到的
+        // 计算虚拟点的x y z
         virtual_point.x = obs.point.x + virt_safe * std::cos(obstacles_[next].angle);
         virtual_point.y = obs.point.y + virt_safe * std::sin(obstacles_[next].angle);
         virtual_point.z = 0.0;
 
         // Law of cosines for distance to virtual point
+        // 计算当前观测点obs到虚拟点之间的距离
         double range = std::sqrt(virt_safe * virt_safe + dist_gap - 2 * virt_safe * obs.distance * std::cos(obstacles_[next].angle - obs.angle));
 
-        if (right)
+        if (right) //根据左右的搜索方向，将gap的开始点和结束点放入到GAP list中。
         {
           gaps.push_back(Gap(obs, Obstacle(virtual_point, obstacles_[next].angle, range)));
         }
@@ -653,14 +669,14 @@ namespace reactive_assistance
     int n = obstacles_.size(); //使用障碍物的数量作为循环的次数
 
     // Counterclockwise search is to check for the existence of RIGHT discontinuities
-    //使用逆时针搜索，判断是否有不连续点
+    //使用逆时针搜索，判断是否有不连续点， 右查找
     int k = 0;
     do
     {
       gapSearch(obstacles_[k], n, true, gaps, k);
-    } while (k != 0); //直到
+    } while (k != 0); //找到所有的gap
 
-    // Clockwise search is to check for the existence of LEFT discontinuities
+    // Clockwise search is to check for the existence of LEFT discontinuities， 左查找
     k = n - 1;
     do
     {
@@ -668,8 +684,8 @@ namespace reactive_assistance
     } while (k != (n - 1));
 
     // Filter the gaps detected
-    std::vector<Gap> filt_gaps;
-    filterGaps(gaps, filt_gaps);
+    std::vector<Gap> filt_gaps; // 初始化filt_gaps
+    filterGaps(gaps, filt_gaps); // 过滤gap
 
     // Overwrite gaps property
     gaps_ = filt_gaps;
@@ -678,17 +694,19 @@ namespace reactive_assistance
   // Filter out gaps to eliminate duplicates and gaps that do not exceed the required width
   void ObstacleMap::filterGaps(const std::vector<Gap> &in_gaps, std::vector<Gap> &out_gaps) const
   {
-    std::vector<Gap> filt_gaps;
+    // 对gap进行过滤 
+    // 输入：in_gaps，输出：out_gaps
+    std::vector<Gap> filt_gaps; 
 
     // Initialise point cloud to visualise the gaps
-    PointCloudPtr point_cloud(new PointCloud);
+    PointCloudPtr point_cloud(new PointCloud); // 初始化可视化点云
     point_cloud->header.frame_id = robot_frame_;
 
-    unsigned int gaps_size = in_gaps.size();
+    unsigned int gaps_size = in_gaps.size(); // 将gap的数量保存在gaps_size中
     // Evaluate each gap to determine whether to eliminate it if it exists within another gap
-    for (unsigned int i = 0; i < gaps_size; ++i)
+    for (unsigned int i = 0; i < gaps_size; ++i) //遍历所有的gap
     {
-      bool redundant_gap = false;
+      bool redundant_gap = false; //重新设置redundant_gap标记位
       unsigned int j = 0;
 
       // If the ith is a 'front' gap
@@ -711,7 +729,7 @@ namespace reactive_assistance
         }
       }
 
-      if (!redundant_gap)
+      if (!redundant_gap) // 如果当前的gap不是冗余的，则保留
       {
         filt_gaps.push_back(in_gaps[i]);
       }
