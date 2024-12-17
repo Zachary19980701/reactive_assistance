@@ -13,20 +13,22 @@
 namespace reactive_assistance
 {
   //==============================================================================
-  // PUBLIC OBSTACLE MAP METHODS
+  // PUBLIC OBSTACLE MAP METHODS 发布障碍物地图
   //==============================================================================
 
   ObstacleMap::ObstacleMap(tf2_ros::Buffer& tf, const RobotProfile& rp) 
                           : tf_buffer_(tf)
                           , robot_profile_(rp)
   {
+    //初始化ros命名空间
     ros::NodeHandle nh;
     ros::NodeHandle nh_priv("~");
-
+    //建立ros的baselink
     nh_priv.param<std::string>("base_frame", robot_frame_, std::string("base_link"));
 
-    std::string laser_sub_topic;
+    std::string laser_sub_topic; //初始化ros话题名
     nh_priv.param<std::string>("laser_sub_topic", laser_sub_topic, std::string("scan"));
+    //订阅ros话题，订阅scan话题
     laser_sub_ = nh.subscribe<sensor_msgs::LaserScan>(laser_sub_topic.c_str(), 1, &ObstacleMap::scanCallback, this);
 
     // Topics and publishers for gap visualisation
@@ -35,9 +37,9 @@ namespace reactive_assistance
     nh_priv.param<std::string>("virt_gaps_pub_topic", virt_gaps_pub_topic, std::string("virt_gaps"));
     nh_priv.param<std::string>("closest_gap_pub_topic", closest_gap_pub_topic, std::string("closest_gap"));
 
-    gaps_pub_ = nh.advertise<PointCloud>(gaps_pub_topic, 10);
+    gaps_pub_ = nh.advertise<PointCloud>(gaps_pub_topic, 10); //gap话题发布
     virt_gaps_pub_ = nh.advertise<PointCloud>(virt_gaps_pub_topic, 10);
-    closest_gap_pub_ = nh.advertise<PointCloud>(closest_gap_pub_topic, 10);
+    closest_gap_pub_ = nh.advertise<PointCloud>(closest_gap_pub_topic, 10); // 最相近的gap
   }
 
   void ObstacleMap::scanCallback(const sensor_msgs::LaserScan::ConstPtr &scan)
@@ -45,7 +47,7 @@ namespace reactive_assistance
     boost::mutex::scoped_lock lock(scan_mutex_);
     scan_ = *scan;
 
-    updateObstacles();
+    updateObstacles(); // 更新障碍物和gap
     updateGaps();
   }
 
@@ -487,7 +489,8 @@ namespace reactive_assistance
 
   void ObstacleMap::updateObstacles()
   {
-    // Get appropriate transform
+    //将每个点作为激光的障碍物进行更新
+    // Get appropriate transform， 获得变化矩阵
     geometry_msgs::TransformStamped transform;
     try
     {
@@ -497,17 +500,21 @@ namespace reactive_assistance
           ros::Time(0),
           ros::Duration(3.0));
     }
+
+
     catch (const tf2::TransformException &ex)
     {
       ROS_ERROR("Error during transform: %s", ex.what());
     }
-
-    std::vector<Obstacle> obstacles;
-    unsigned int obs_size = scan_.ranges.size();
-    min_obs_dist_ = scan_.ranges[0];
+    
+    //进行障碍物更新
+    std::vector<Obstacle> obstacles; //初始化障碍物列表
+    unsigned int obs_size = scan_.ranges.size(); //将雷达的size作为障碍物的size
+    min_obs_dist_ = scan_.ranges[0]; //最小障碍物距离
     // Populate the obstacles vector from scanner readings
-    for (unsigned int i = 0; i < obs_size; ++i)
+    for (unsigned int i = 0; i < obs_size; ++i) //遍历所有的激光雷达数据
     {
+      //激光点转化到当前的机器人坐标系中
       const double &range = scan_.ranges[i];
       double angle = scan_.angle_min + i * scan_.angle_increment;
 
@@ -518,7 +525,8 @@ namespace reactive_assistance
       scan_point.point.y = range * std::sin(angle);
       scan_point.point.z = 0.0;
 
-      // Transform scan point to base point
+
+      // Transform scan point to base p2. Gap Searching
       tf2::doTransform(scan_point, base_point, transform);
       if (!std::isinf(range))
       {
@@ -542,12 +550,14 @@ namespace reactive_assistance
 
   void ObstacleMap::gapSearch(const Obstacle &obs, int n, bool right, std::vector<Gap> &gaps, int &next_ind) const
   {
+    //搜索障碍物地图中机器人能够通过的间隙
     // Wrap around effect for checking next index
-    int next = (right) ? ((next_ind + 1) % n) : ((n + (next_ind - 1)) % n);
+    int next = (right) ? ((next_ind + 1) % n) : ((n + (next_ind - 1)) % n); // 基于当前的搜索方向，判断是下一个搜索点的index是左移还是右移
 
     // Depth discontinuity detected when two contiguous depth measurements are either
     // separated by the min width (bilateral: basis on endpoint closer to robot) OR
     // either measurement is a non-obstacle point (unilateral: basis at unique endpoint)
+    // 寻找深度不连续的点，判断深度不连续点是否大于机器人的通过距离
     if (((dist(obstacles_[next].point, obs.point) > robot_profile_.min_gap_width) && (obs.distance < obstacles_[next].distance)) || (!almostEqual(obs.distance, scan_.range_max) && almostEqual(obstacles_[next].distance, scan_.range_max)))
     {
       // Initialise min variables
@@ -636,17 +646,19 @@ namespace reactive_assistance
   }
 
   // Admissible Gap method of evaluating each range reading to detect gaps (treating each scan as a sector)
+  // 更新地图中的间隙(gap)
   void ObstacleMap::updateGaps()
   {
-    std::vector<Gap> gaps;
-    int n = obstacles_.size();
+    std::vector<Gap> gaps; // 初始化一个空的gap
+    int n = obstacles_.size(); //使用障碍物的数量作为循环的次数
 
     // Counterclockwise search is to check for the existence of RIGHT discontinuities
+    //使用逆时针搜索，判断是否有不连续点
     int k = 0;
     do
     {
       gapSearch(obstacles_[k], n, true, gaps, k);
-    } while (k != 0);
+    } while (k != 0); //直到
 
     // Clockwise search is to check for the existence of LEFT discontinuities
     k = n - 1;
