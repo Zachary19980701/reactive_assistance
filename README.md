@@ -1,5 +1,5 @@
 # Reactive Obstacle Avoidance
-
+这是基于间隙(gap)进行差速小车导航的开源代码中文注释版本-hzy
 Repository contains a ROS package that is an adapted implementation of a "gap-based" algorithm for reactive obstacle avoidance, originally introduced as [admissible gap navigation](https://www.sciencedirect.com/science/article/pii/S0921889017306905#!). 
 
 The package currently offers two use-cases for differential-drive rectangular mobile bases with full field-of-view 2D planar laser scan data:

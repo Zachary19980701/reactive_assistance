@@ -52,6 +52,7 @@ namespace reactive_assistance
   }
 
   // Return the closest gap from in_gaps according to either the angular or Euclidean distance
+  // 返回距离最近的障碍物
   GapPtr ObstacleMap::findClosestGap(const Trajectory &traj, const std::vector<Gap> &in_gaps, bool euclid, int &idx) const
   {
     unsigned int gaps_size = in_gaps.size();
@@ -117,78 +118,83 @@ namespace reactive_assistance
   }
 
   // Find whether an input 'gap' is admissible or not, and return the vectors of "virtual" gaps and their clearances
+  // 将实际的gap转化为虚拟的gap，将原始的较为杂乱的间隙转化为调整之后的间隙，同时计算安全余量保证机器人的通过性
   void ObstacleMap::findVirtualGaps(const Gap &gap, std::vector<GapPtr> &virt_gaps, std::vector<double> &clearances) const
   {
     // Looping check variable
     bool valid_gap_found = false;
     // Initialise with input gap
-    virt_gaps.push_back(GapPtr(new Gap(gap)));
+    virt_gaps.push_back(GapPtr(new Gap(gap))); // 初始化virtual_gap
 
     // Initialise point cloud to visualise the virtual gaps
-    PointCloudPtr point_cloud(new PointCloud);
-    point_cloud->header.frame_id = robot_frame_;
+    PointCloudPtr point_cloud(new PointCloud); // 初始化可视化的列表
+    point_cloud->header.frame_id = robot_frame_; // frame_id的初始化
 
-    do
+    do // 循环直到找到合适的gap
     {
-      // Take the last virtual gap constructed and run it through the iterative algorithm
-      GapPtr virt = virt_gaps.back();
+      // Take the last virtual gap constructed and run it through the iterative algorithm 
+      //搜索所有的gap，寻找合适的gap
+      GapPtr virt = virt_gaps.back(); // 将虚拟gap的最后一个赋值给 virt
 
+      //将gap的左值与右值都添加到可视化的列表中
       point_cloud->points.push_back(pcl::PointXYZ(virt->right.point.x, virt->right.point.y, virt->right.point.z));
       point_cloud->points.push_back(pcl::PointXYZ(virt->left.point.x, virt->left.point.y, virt->left.point.z));
 
+      
       std::vector<Obstacle> o_in, o_ex;
       int i = 0;
       // Compute interior and exterior obstacle points
-      for (std::vector<Obstacle>::const_iterator it = obstacles_.begin(); it != obstacles_.end(); ++it)
+      for (std::vector<Obstacle>::const_iterator it = obstacles_.begin(); it != obstacles_.end(); ++it) // 遍历所有的障碍物，将障碍物分配为内部障碍物和外部障碍物
       {
         if (!almostEqual(it->distance, scan_.range_max))
         {
-          if (isBetweenAngles(it->angle, virt->right.angle, virt->left.angle))
+          if (isBetweenAngles(it->angle, virt->right.angle, virt->left.angle)) // 如果障碍物位于间隙的左右边界之间，则划分为内部障碍物
           {
             o_in.push_back(*it);
           }
           else
           {
-            o_ex.push_back(*it);
+            o_ex.push_back(*it); // 障碍物在间隙的左右边界之外，则划分为外部障碍物
           }
         }
 
         i++;
       }
 
-      // Erase every exterior obstacle point that yields an angular distance of more than PI
+      // Erase every exterior obstacle point that yields an angular distance of more than PI // 删除角度大于PI的外部障碍物
       std::vector<Obstacle> o_ex_apo;
-      for (std::vector<Obstacle>::const_iterator it = o_ex.begin(); it != o_ex.end(); ++it)
+      for (std::vector<Obstacle>::const_iterator it = o_ex.begin(); it != o_ex.end(); ++it) // 对外部障碍物list进行循环
       {
-        if ((proj(it->angle - virt->right.angle) > 0.0) || (proj(it->angle - virt->left.angle) < 0.0))
+        if ((proj(it->angle - virt->right.angle) > 0.0) || (proj(it->angle - virt->left.angle) < 0.0)) // 满足障碍物角度差离大于PI，将障碍物放入到o_ex_apo中
         {
           o_ex_apo.push_back(*it);
         }
       }
 
       // Work out the trajectory to this gap's sub goal
-      geometry_msgs::Point sub_goal;
-      findSubGoal(*virt, sub_goal);
+      geometry_msgs::Point sub_goal; // 初始化sub_goal
+      findSubGoal(*virt, sub_goal); // 进行sub_goal的计算
 
-      Trajectory traj(sub_goal);
+      Trajectory traj(sub_goal); // 计算subgoal的轨迹
 
-      // Update clearances vector for this gap
+      // Update clearances vector for this gap 更新间隙向量
       clearances.push_back(computeClearance(traj));
 
       // Vector of colliding obstacles
-      std::vector<Obstacle> coll_obs;
+      std::vector<Obstacle> coll_obs; // 计算碰撞障碍物向量
       // If the tilda exterior obstacles are empty then check the interior
-      if (isNavigable(traj, o_ex_apo, coll_obs))
+      // 判断路径是否可以通行
+      if (isNavigable(traj, o_ex_apo, coll_obs)) // 如果可以通行
       {
         if (!isNavigable(traj, o_in, coll_obs))
         {
-          virt_gaps.push_back(NULL);
+          virt_gaps.push_back(NULL); // 如果内部障碍物中不可以通行，说明当前间隙不可行，将NULL添加到virt_gaps，表示该间隙无法通过
         }
 
-        valid_gap_found = true;
+        valid_gap_found = true; // 如果在外部障碍物中可以通行，将valid_gap_found设置为true, 表示找到了一个可用的间隙
       }
       // Else create a new virtual gap!
-      else
+      else // 如果不可以通行，则创建一个新的虚拟间隙
       {
         unsigned int coll_size = coll_obs.size();
         double min_d = std::numeric_limits<double>::max();
@@ -301,7 +307,7 @@ namespace reactive_assistance
           }
         }
       }
-    } while (!valid_gap_found);
+    } while (!valid_gap_found); 
 
     virt_gaps_pub_.publish(point_cloud);
   }
